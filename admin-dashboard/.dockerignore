@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+**/dist
+.env
+**/.env
+.git
+*.md
+.DS_Store
+client/src/**/*.test.*
+server/test

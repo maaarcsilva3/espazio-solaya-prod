@@ -1,0 +1,78 @@
+# Production-oriented stack: Postgres (private) + immutable dashboard image.
+# Put your existing host nginx (or another reverse proxy) in front for TLS.
+# From this folder:
+#   cp .env.example .env && cp admin-dashboard/.env.example admin-dashboard/.env
+#   # set strong POSTGRES_PASSWORD, JWT_SECRET, ADMIN_PASSWORD; COOKIE_SECURE=true
+#   mkdir -p database/data
+#   docker compose up -d --build
+# Point nginx at 127.0.0.1:HOST_PORT (see deploy/nginx-booking-admin.conf.example)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: booking-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-espazio_booking_system}
+      TZ: ${TZ:-UTC}
+      # Keep PGDATA under a subdir so the bind mount can be owned/empty on first boot.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # Emergency host access only — bound to loopback, not the public interface.
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5437}:5432"
+    volumes:
+      # Host folder outside Docker — survives compose down / image rebuilds.
+      - ${POSTGRES_DATA_DIR:-./database/data}:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  dashboard:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile
+      args:
+        # Must match the nginx location prefix (with trailing slash). Rebuild after changing.
+        VITE_BASE_PATH: ${BASE_PATH:-/dev/espazio-admin}/
+    image: booking-admin-dashboard:local
+    container_name: booking-admin-dashboard
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./admin-dashboard/.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_SSL: "false"
+      DATABASE_URL: postgres://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-espazio_booking_system}
+      COOKIE_SECURE: "true"
+      BASE_PATH: ${BASE_PATH:-/dev/espazio-admin}
+    # Loopback only — nginx on the host proxies HTTPS here. Do not publish 0.0.0.0.
+    ports:
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks:
+      - internal
+
+networks:
+  internal:

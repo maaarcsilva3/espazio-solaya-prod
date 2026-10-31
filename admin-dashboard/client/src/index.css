@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-gray-50 text-gray-800 antialiased dark:bg-gray-900 dark:text-gray-200;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800;
+  }
+}
+
+/* FullCalendar theme */
+.fc {
+  --fc-border-color: #e2e8f0;
+  --fc-button-bg-color: #ffffff;
+  --fc-button-text-color: #334155;
+  --fc-button-border-color: #cbd5e1;
+  --fc-button-hover-bg-color: #f1f5f9;
+  --fc-button-hover-border-color: #cbd5e1;
+  --fc-button-active-bg-color: #4f46e5;
+  --fc-button-active-border-color: #4f46e5;
+  --fc-today-bg-color: rgba(99, 102, 241, 0.08);
+  --fc-page-bg-color: #ffffff;
+  --fc-neutral-bg-color: #f8fafc;
+  --fc-list-event-hover-bg-color: #f8fafc;
+}
+
+.dark .fc {
+  --fc-border-color: #334155;
+  --fc-button-bg-color: #1e293b;
+  --fc-button-text-color: #e2e8f0;
+  --fc-button-border-color: #475569;
+  --fc-button-hover-bg-color: #334155;
+  --fc-button-hover-border-color: #475569;
+  --fc-today-bg-color: rgba(99, 102, 241, 0.15);
+  --fc-page-bg-color: #1e293b;
+  --fc-neutral-bg-color: #0f172a;
+  --fc-list-event-hover-bg-color: #0f172a;
+}
+
+.fc .fc-toolbar-title {
+  @apply text-lg font-semibold text-gray-900 dark:text-white sm:text-xl;
+}
+
+.fc .fc-button {
+  @apply text-sm capitalize shadow-none;
+}
+
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+  @apply text-white;
+}
+
+.fc .fc-button:focus {
+  @apply shadow-none;
+}
+
+.fc .fc-col-header-cell-cushion,
+.fc .fc-daygrid-day-number,
+.fc .fc-list-day-text,
+.fc .fc-list-day-side-text {
+  @apply text-gray-700 dark:text-gray-300;
+}
+
+.fc .fc-event {
+  @apply cursor-pointer;
+}
+
+.fc .fc-daygrid-event {
+  @apply px-1 text-xs;
+}
+
+@media (max-width: 640px) {
+  .fc .fc-toolbar {
+    @apply flex-col gap-2;
+  }
+}

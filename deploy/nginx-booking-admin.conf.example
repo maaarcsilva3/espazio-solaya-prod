@@ -1,0 +1,28 @@
+# Paste into your existing ds-solutionsinc.com server { } block
+# (same pattern as /dev/espazio-demo, /dev/ap-tracker/, etc.).
+#
+# App listens on 127.0.0.1:3000 (Compose HOST_PORT).
+# Trailing slash on proxy_pass strips /dev/espazio-admin/ so the app sees /api, /assets, …
+#
+# Rebuild the dashboard image after changing BASE_PATH:
+#   BASE_PATH=/dev/espazio-admin docker compose up -d --build dashboard
+
+    # Booking admin (Espazio)
+    location = /dev/espazio-admin {
+        return 301 /dev/espazio-admin/;
+    }
+
+    location /dev/espazio-admin/ {
+        proxy_pass http://127.0.0.1:3000/;
+        proxy_http_version 1.1;
+        client_max_body_size 1m;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # If Cloudflare (or another edge) terminates HTTPS in front of this :80 nginx,
+        # use "https" so secure cookies work. Otherwise $scheme is fine when nginx itself does TLS.
+        proxy_set_header X-Forwarded-Proto https;
+
+        proxy_read_timeout 60s;
+    }
