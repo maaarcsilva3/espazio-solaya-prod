@@ -5,3 +5,5 @@ node_modules
 # Postgres data directory (host bind mount — never commit)
 database/data/
 !database/data/.gitkeep
+database/uploads/*
+!database/uploads/.gitkeep

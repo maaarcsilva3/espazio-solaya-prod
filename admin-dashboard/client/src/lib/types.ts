@@ -107,8 +107,23 @@ export interface Stats {
 
 export type Pipeline = 'event_venue' | 'room_booking';
 export type LeadSource = 'website' | 'facebook' | 'instagram' | 'social_media' | 'referral' | 'walk_in' | 'other';
+export type EventType = 'Corporate' | 'Wedding' | 'Socials';
+export type AttachmentKind = 'qualify' | 'payment';
 export type StageOutcome = 'open' | 'won' | 'lost';
 export type VisitStatus = 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
+
+export interface InquiryAttachment {
+  id: number;
+  inquiry_id: number;
+  kind: AttachmentKind;
+  original_name: string;
+  stored_name: string;
+  mime_type: string;
+  size_bytes: number;
+  created_by: number | null;
+  created_by_name: string | null;
+  created_at: string;
+}
 
 export interface AgentRef {
   id: number;
@@ -199,6 +214,8 @@ export interface Inquiry {
   guests: number | null;
   start_at: string | null;
   end_at: string | null;
+  cocktail_time: string | null;
+  accommodation_date: string | null;
   special_requests: string | null;
   additional_services: string | null;
   custom_arrangements: string | null;
@@ -206,8 +223,11 @@ export interface Inquiry {
   package_price: number;
   additional_charges: number;
   discounts: number;
+  discount_percent: number | null;
   other_fees: number;
   total_quoted: number;
+  vat_amount?: number;
+  rate_without_vat?: number;
   final_agreed_price: number | null;
   deposit_amount: number | null;
   deposit_note: string | null;
@@ -224,6 +244,7 @@ export interface Inquiry {
   visits?: SiteVisit[];
   price_events?: PriceEvent[];
   stage_events?: StageEvent[];
+  attachments?: InquiryAttachment[];
 }
 
 export interface InquiryInput {
@@ -239,6 +260,8 @@ export interface InquiryInput {
   guests: number | null;
   start_at: string | null;
   end_at: string | null;
+  cocktail_time?: string | null;
+  accommodation_date?: string | null;
   special_requests: string | null;
   additional_services: string | null;
   custom_arrangements: string | null;
@@ -246,6 +269,7 @@ export interface InquiryInput {
   package_price: number;
   additional_charges: number;
   discounts: number;
+  discount_percent?: number | null;
   other_fees: number;
   final_agreed_price: number | null;
   deposit_amount: number | null;

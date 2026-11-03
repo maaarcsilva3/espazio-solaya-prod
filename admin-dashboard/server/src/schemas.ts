@@ -1,5 +1,15 @@
 import { z } from 'zod';
-import { LEAD_SOURCES, normalizeTimestamp, PIPELINES, STAGE_OUTCOMES, VISIT_STATUSES } from './domain/crm';
+import {
+  discountFromPercent,
+  EVENT_TYPES,
+  isFiveMinuteStep,
+  LEAD_SOURCES,
+  normalizeTime,
+  normalizeTimestamp,
+  PIPELINES,
+  STAGE_OUTCOMES,
+  VISIT_STATUSES,
+} from './domain/crm';
 
 export const OFFERING_TYPES = [
   'event_place_with_rooms',
@@ -88,6 +98,62 @@ const optionalTimestamp = z
     return normalized;
   });
 
+const optionalTime = z
+  .string()
+  .trim()
+  .nullish()
+  .transform((value, ctx) => {
+    if (!value) return null;
+    const normalized = normalizeTime(value);
+    if (!normalized) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Use a valid time in 5-minute steps (e.g. 14:00, 14:05)',
+      });
+      return z.NEVER;
+    }
+    return normalized;
+  });
+
+const optionalDate = z
+  .string()
+  .trim()
+  .nullish()
+  .transform((value, ctx) => {
+    if (!value) return null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Use YYYY-MM-DD' });
+      return z.NEVER;
+    }
+    return value;
+  });
+
+const optionalPercent = z
+  .union([z.number(), z.string()])
+  .nullish()
+  .transform((v, ctx) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Must be between 0 and 100' });
+      return z.NEVER;
+    }
+    return Math.round(n * 100) / 100;
+  });
+
+const optionalEventType = z
+  .string()
+  .trim()
+  .nullish()
+  .transform((value, ctx) => {
+    if (!value) return null;
+    if (!(EVENT_TYPES as readonly string[]).includes(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose Corporate, Wedding, or Socials' });
+      return z.NEVER;
+    }
+    return value as (typeof EVENT_TYPES)[number];
+  });
+
 export const offeringSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(160),
   type: z.enum(OFFERING_TYPES),
@@ -174,36 +240,71 @@ export const statusOrderSchema = z.object({
   keys: z.array(statusKey).min(1).max(100),
 });
 
-export const inquirySchema = z.object({
-  pipeline: z.enum(PIPELINES),
-  stage_id: z.coerce.number().int().positive().optional(),
-  customer_name: z.string().trim().min(1, 'Name is required').max(160),
-  phone: optionalText(40),
-  email: z.string().trim().toLowerCase().email('Enter a valid email'),
-  lead_source: z.enum(LEAD_SOURCES),
-  lead_source_detail: optionalText(200),
-  offering_id: optionalInt,
-  event_type: optionalText(120),
-  guests: optionalInt,
-  start_at: optionalTimestamp,
-  end_at: optionalTimestamp,
-  special_requests: optionalText(5000),
-  additional_services: optionalText(5000),
-  custom_arrangements: optionalText(5000),
-  internal_notes: optionalText(5000),
-  package_price: moneyField,
-  additional_charges: moneyField,
-  discounts: moneyField,
-  other_fees: moneyField,
-  final_agreed_price: optionalMoney,
-  deposit_amount: optionalMoney,
-  deposit_note: optionalText(2000),
-  agent_ids: z.array(z.coerce.number().int().positive()).max(20).optional().transform((ids) => ids ?? []),
-});
+export const inquirySchema = z
+  .object({
+    pipeline: z.enum(PIPELINES),
+    stage_id: z.coerce.number().int().positive().optional(),
+    customer_name: z.string().trim().min(1, 'Name is required').max(160),
+    phone: optionalText(40),
+    email: z.string().trim().toLowerCase().email('Enter a valid email'),
+    lead_source: z.enum(LEAD_SOURCES),
+    lead_source_detail: optionalText(200),
+    offering_id: optionalInt,
+    event_type: optionalEventType,
+    guests: optionalInt,
+    start_at: optionalTimestamp,
+    end_at: optionalTimestamp,
+    cocktail_time: optionalTime,
+    accommodation_date: optionalDate,
+    special_requests: optionalText(5000),
+    additional_services: optionalText(5000),
+    custom_arrangements: optionalText(5000),
+    internal_notes: optionalText(5000),
+    package_price: moneyField,
+    additional_charges: moneyField,
+    discounts: moneyField,
+    discount_percent: optionalPercent,
+    other_fees: moneyField,
+    final_agreed_price: optionalMoney,
+    deposit_amount: optionalMoney,
+    deposit_note: optionalText(2000),
+    agent_ids: z.array(z.coerce.number().int().positive()).max(20).optional().transform((ids) => ids ?? []),
+  })
+  .superRefine((value, ctx) => {
+    if (value.pipeline === 'event_venue' && value.start_at && !isFiveMinuteStep(value.start_at)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Event start time must be in 5-minute steps',
+        path: ['start_at'],
+      });
+    }
+  })
+  .transform((value) => {
+    const discount_percent = value.discount_percent;
+    const discounts =
+      discount_percent != null
+        ? discountFromPercent(
+            value.package_price,
+            value.additional_charges,
+            value.other_fees,
+            discount_percent,
+          )
+        : value.discounts;
+    return {
+      ...value,
+      // Soft-retired: keep columns but stop writing new values from the API.
+      additional_services: null as string | null,
+      custom_arrangements: null as string | null,
+      discount_percent,
+      discounts,
+    };
+  });
 
-export const inquiryUpdateSchema = inquirySchema.extend({
-  updated_at: z.string().trim().min(1),
-});
+export const inquiryUpdateSchema = inquirySchema.and(
+  z.object({
+    updated_at: z.string().trim().min(1),
+  }),
+);
 
 export const stageMoveSchema = z.object({
   stage_id: z.coerce.number().int().positive(),

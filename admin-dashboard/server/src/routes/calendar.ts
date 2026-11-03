@@ -33,6 +33,7 @@ calendarRouter.get(
       [start, end, requested],
     );
 
+    // Show open + confirmed inquiries (not lost). Availability still uses reserves_inventory only.
     const inquiries = await query<{
       id: number;
       customer_name: string;
@@ -41,24 +42,32 @@ calendarRouter.get(
       event_type: string | null;
       offering_name: string | null;
       start_at: string;
-      end_at: string;
+      end_at: string | null;
       stage_label: string;
+      stage_outcome: string;
+      reserves_inventory: boolean;
       bg: string;
       text_color: string;
     }>(
       `SELECT i.id, i.customer_name, i.pipeline, i.guests, i.event_type,
               o.name AS offering_name,
               to_char(i.start_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS start_at,
-              to_char(i.end_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS end_at,
-              s.label AS stage_label, s.bg, s.text_color
+              to_char(
+                COALESCE(
+                  i.end_at,
+                  date_trunc('day', i.start_at) + INTERVAL '1 day'
+                ),
+                'YYYY-MM-DD"T"HH24:MI:SS'
+              ) AS end_at,
+              s.label AS stage_label, s.outcome AS stage_outcome, s.reserves_inventory,
+              s.bg, s.text_color
          FROM inquiries i
          JOIN pipeline_stages s ON s.id = i.stage_id
          LEFT JOIN offerings o ON o.id = i.offering_id
-        WHERE s.reserves_inventory
+        WHERE s.outcome <> 'lost'
           AND i.start_at IS NOT NULL
-          AND i.end_at IS NOT NULL
           AND i.start_at < $2::timestamp
-          AND i.end_at > $1::timestamp
+          AND COALESCE(i.end_at, date_trunc('day', i.start_at) + INTERVAL '1 day') > $1::timestamp
         ORDER BY i.start_at`,
       [start, end],
     );
@@ -80,7 +89,7 @@ calendarRouter.get(
         },
       })),
       ...inquiries.map((r) => {
-        const range = allDayRange(r.start_at, r.end_at);
+        const range = allDayRange(r.start_at, r.end_at ?? r.start_at);
         return {
           id: `inquiry-${r.id}`,
           title: `${r.customer_name}${r.offering_name ? ` - ${r.offering_name}` : ''}`,
@@ -95,6 +104,8 @@ calendarRouter.get(
             inquiry_id: r.id,
             pipeline: r.pipeline,
             stage_label: r.stage_label,
+            stage_outcome: r.stage_outcome,
+            reserves_inventory: r.reserves_inventory,
             offering_name: r.offering_name,
             guests: r.guests,
             event_type: r.event_type,

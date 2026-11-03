@@ -39,8 +39,10 @@ services:
       context: ./admin-dashboard
       dockerfile: Dockerfile
       args:
-        # Must match the nginx location prefix (with trailing slash). Rebuild after changing.
-        VITE_BASE_PATH: ${BASE_PATH:-/dev/espazio-admin}/
+        # Must match the nginx location prefix. Use "/" for direct localhost access.
+        # Trailing slash is added in the Dockerfile/Vite normalize; do not append "/" here
+        # or BASE_PATH=/ becomes "//" and breaks asset URLs.
+        VITE_BASE_PATH: ${BASE_PATH:-/}
     image: booking-admin-dashboard:local
     container_name: booking-admin-dashboard
     restart: unless-stopped
@@ -55,10 +57,14 @@ services:
       DATABASE_SSL: "false"
       DATABASE_URL: postgres://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-espazio_booking_system}
       COOKIE_SECURE: "true"
-      BASE_PATH: ${BASE_PATH:-/dev/espazio-admin}
+      # Empty or "/" = serve at domain/localhost root (no nginx subpath).
+      BASE_PATH: ${BASE_PATH:-/}
+      UPLOADS_DIR: /app/uploads
     # Loopback only — nginx on the host proxies HTTPS here. Do not publish 0.0.0.0.
     ports:
       - "127.0.0.1:${HOST_PORT:-3000}:3000"
+    volumes:
+      - ${UPLOADS_DIR:-./database/uploads}:/app/uploads
     healthcheck:
       test:
         [

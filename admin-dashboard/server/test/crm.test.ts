@@ -6,9 +6,13 @@ import {
   averageStageSeconds,
   bookingWindow,
   conversionCohort,
+  discountFromPercent,
   groupedConversion,
+  isFiveMinuteStep,
   nextDay,
+  normalizeTime,
   outcomeCounts,
+  quoteBreakdown,
   quoteTotal,
   rangesOverlap,
   reservationWindow,
@@ -33,6 +37,40 @@ describe('quoteTotal', () => {
   it('rejects a discount larger than the other amounts', () => {
     const result = quoteTotal({ package_price: 10, additional_charges: 0, other_fees: 0, discounts: 10.01 });
     assert.equal(result.ok, false);
+  });
+});
+
+describe('VAT-inclusive quote breakdown', () => {
+  it('applies percent discount on gross then strips 12% VAT', () => {
+    const result = quoteBreakdown({
+      package_price: 112000,
+      additional_charges: 0,
+      other_fees: 0,
+      discounts: 0,
+      discount_percent: 10,
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.breakdown.actual_rate, 112000);
+    assert.equal(result.breakdown.discount_amount, 11200);
+    assert.equal(result.breakdown.gross_after_discount, 100800);
+    assert.equal(result.breakdown.vat_amount, 10800);
+    assert.equal(result.breakdown.rate_without_vat, 90000);
+    assert.equal(result.breakdown.total_quoted, 100800);
+  });
+
+  it('computes discount pesos from percent', () => {
+    assert.equal(discountFromPercent(100000, 0, 0, 5), 5000);
+  });
+});
+
+describe('five-minute timing', () => {
+  it('accepts multiples of five minutes', () => {
+    assert.equal(isFiveMinuteStep('2026-01-01T14:00'), true);
+    assert.equal(isFiveMinuteStep('14:05'), true);
+    assert.equal(isFiveMinuteStep('14:07'), false);
+    assert.equal(normalizeTime('14:05'), '14:05:00');
+    assert.equal(normalizeTime('14:07'), null);
   });
 });
 

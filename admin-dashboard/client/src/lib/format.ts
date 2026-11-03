@@ -1,4 +1,12 @@
-import type { LeadSource, OfferingType, Pipeline, StageOutcome, StatusCategory, VisitStatus } from './types';
+import type {
+  EventType,
+  LeadSource,
+  OfferingType,
+  Pipeline,
+  StageOutcome,
+  StatusCategory,
+  VisitStatus,
+} from './types';
 
 export const OFFERING_TYPE_LABELS: Record<OfferingType, string> = {
   event_place_with_rooms: 'Event Place + Rooms',
@@ -77,6 +85,14 @@ export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
 };
 
 export const LEAD_SOURCES = Object.keys(LEAD_SOURCE_LABELS) as LeadSource[];
+
+export const EVENT_TYPE_LABELS: Record<EventType, string> = {
+  Corporate: 'Corporate',
+  Wedding: 'Wedding',
+  Socials: 'Socials',
+};
+
+export const EVENT_TYPES = Object.keys(EVENT_TYPE_LABELS) as EventType[];
 
 export const STAGE_OUTCOME_LABELS: Record<StageOutcome, string> = {
   open: 'Open',

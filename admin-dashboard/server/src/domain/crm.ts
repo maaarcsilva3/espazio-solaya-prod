@@ -14,6 +14,15 @@ export const LEAD_SOURCES = [
 ] as const;
 export type LeadSource = (typeof LEAD_SOURCES)[number];
 
+export const EVENT_TYPES = ['Corporate', 'Wedding', 'Socials'] as const;
+export type EventType = (typeof EVENT_TYPES)[number];
+
+export const ATTACHMENT_KINDS = ['qualify', 'payment'] as const;
+export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
+
+/** Philippine VAT rate for VAT-inclusive amounts (12/112). */
+export const VAT_INCLUSIVE_RATE = 12 / 112;
+
 export const STAGE_OUTCOMES = ['open', 'won', 'lost'] as const;
 export type StageOutcome = (typeof STAGE_OUTCOMES)[number];
 
@@ -34,20 +43,105 @@ export interface QuoteParts {
   other_fees: number;
 }
 
+export interface QuoteBreakdown {
+  actual_rate: number;
+  discount_percent: number;
+  discount_amount: number;
+  gross_after_discount: number;
+  vat_amount: number;
+  rate_without_vat: number;
+  total_quoted: number;
+}
+
 export function toCents(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100);
+}
+
+export function fromCents(cents: number): number {
+  return cents / 100;
+}
+
+/** Discount peso amount from a percent of the gross actual rate (package + charges + fees). */
+export function discountFromPercent(
+  packagePrice: number,
+  additionalCharges: number,
+  otherFees: number,
+  discountPercent: number | null | undefined,
+): number {
+  const percent = discountPercent == null ? 0 : discountPercent;
+  const grossCents =
+    toCents(packagePrice) + toCents(additionalCharges) + toCents(otherFees);
+  return fromCents(Math.round((grossCents * percent) / 100));
+}
+
+/**
+ * VAT-inclusive breakdown after percent discount on gross.
+ * Actual rate = package + charges + fees; discount % off gross; then strip 12% VAT.
+ */
+export function quoteBreakdown(
+  parts: QuoteParts & { discount_percent?: number | null },
+): { ok: true; breakdown: QuoteBreakdown } | { ok: false; message: string } {
+  const percent = parts.discount_percent == null ? 0 : parts.discount_percent;
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+    return { ok: false, message: 'Discount percent must be between 0 and 100.' };
+  }
+  const actualCents =
+    toCents(parts.package_price) + toCents(parts.additional_charges) + toCents(parts.other_fees);
+  const discountCents =
+    parts.discount_percent != null
+      ? Math.round((actualCents * percent) / 100)
+      : toCents(parts.discounts);
+  if (discountCents > actualCents) {
+    return { ok: false, message: 'Discount cannot exceed the other amounts.' };
+  }
+  const grossCents = actualCents - discountCents;
+  const vatCents = Math.round(grossCents * VAT_INCLUSIVE_RATE);
+  const netCents = grossCents - vatCents;
+  return {
+    ok: true,
+    breakdown: {
+      actual_rate: fromCents(actualCents),
+      discount_percent: percent,
+      discount_amount: fromCents(discountCents),
+      gross_after_discount: fromCents(grossCents),
+      vat_amount: fromCents(vatCents),
+      rate_without_vat: fromCents(netCents),
+      total_quoted: fromCents(grossCents),
+    },
+  };
 }
 
 export function quoteTotal(
   parts: QuoteParts,
 ): { ok: true; total: number } | { ok: false; message: string } {
-  const cents =
-    toCents(parts.package_price) +
-    toCents(parts.additional_charges) +
-    toCents(parts.other_fees) -
-    toCents(parts.discounts);
-  if (cents < 0) return { ok: false, message: 'Discount cannot exceed the other amounts.' };
-  return { ok: true, total: cents / 100 };
+  const result = quoteBreakdown(parts);
+  if (!result.ok) return result;
+  return { ok: true, total: result.breakdown.total_quoted };
+}
+
+/** True when HH:mm (or HH:mm:ss) minutes are a multiple of 5. */
+export function isFiveMinuteStep(value: string | null | undefined): boolean {
+  if (!value) return true;
+  const match = value.trim().match(/(?:^|\s|T)(\d{2}):(\d{2})(?::\d{2})?$/);
+  if (!match) {
+    const timeOnly = value.trim().match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
+    if (!timeOnly) return false;
+    return Number(timeOnly[2]) % 5 === 0;
+  }
+  return Number(match[2]) % 5 === 0;
+}
+
+/** Normalize `HH:mm` or `HH:mm:ss` to `HH:mm:ss`, or null. */
+export function normalizeTime(value: string): string | null {
+  const v = value.trim();
+  const match = v.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = Number(match[3] ?? '00');
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  if (minute % 5 !== 0) return null;
+  return `${match[1]}:${match[2]}:${String(second).padStart(2, '0')}`;
 }
 
 export function sameMoney(a: number | null | undefined, b: number | null | undefined): boolean {

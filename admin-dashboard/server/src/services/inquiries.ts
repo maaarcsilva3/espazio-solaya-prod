@@ -26,6 +26,8 @@ export interface InquiryInput {
   guests: number | null;
   start_at: string | null;
   end_at: string | null;
+  cocktail_time: string | null;
+  accommodation_date: string | null;
   special_requests: string | null;
   additional_services: string | null;
   custom_arrangements: string | null;
@@ -33,6 +35,7 @@ export interface InquiryInput {
   package_price: number;
   additional_charges: number;
   discounts: number;
+  discount_percent: number | null;
   other_fees: number;
   final_agreed_price: number | null;
   deposit_amount: number | null;
@@ -54,6 +57,7 @@ export interface InquiryFilters {
   agentId?: number;
   offeringId?: number;
   leadSource?: LeadSource;
+  eventType?: string;
   from?: string;
   to?: string;
   sort?: 'created_at' | 'start_at' | 'days_in_stage' | 'customer_name';
@@ -83,6 +87,8 @@ interface LockedInquiry {
   guests: number | null;
   start_at: string | null;
   end_at: string | null;
+  cocktail_time: string | null;
+  accommodation_date: string | null;
   special_requests: string | null;
   additional_services: string | null;
   custom_arrangements: string | null;
@@ -90,6 +96,7 @@ interface LockedInquiry {
   package_price: number;
   additional_charges: number;
   discounts: number;
+  discount_percent: number | null;
   other_fees: number;
   final_agreed_price: number | null;
   deposit_amount: number | null;
@@ -112,9 +119,13 @@ export const INQUIRY_SELECT = `
          i.event_type, i.guests,
          to_char(i.start_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS start_at,
          to_char(i.end_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS end_at,
+         to_char(i.cocktail_time, 'HH24:MI') AS cocktail_time,
+         to_char(i.accommodation_date, 'YYYY-MM-DD') AS accommodation_date,
          i.special_requests, i.additional_services, i.custom_arrangements, i.internal_notes,
-         i.package_price, i.additional_charges, i.discounts, i.other_fees,
+         i.package_price, i.additional_charges, i.discounts, i.discount_percent, i.other_fees,
          (i.package_price + i.additional_charges + i.other_fees - i.discounts) AS total_quoted,
+         ROUND(((i.package_price + i.additional_charges + i.other_fees - i.discounts) * 12 / 112)::numeric, 2) AS vat_amount,
+         ROUND(((i.package_price + i.additional_charges + i.other_fees - i.discounts) * 100 / 112)::numeric, 2) AS rate_without_vat,
          i.final_agreed_price, i.deposit_amount, i.deposit_note,
          to_char(i.converted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS converted_at,
          to_char(i.stage_entered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS stage_entered_at,
@@ -141,7 +152,7 @@ function shape<T extends { agents: unknown }>(row: T) {
 }
 
 async function relations(id: number) {
-  const [activities, visits, priceEvents, stageEvents] = await Promise.all([
+  const [activities, visits, priceEvents, stageEvents, attachments] = await Promise.all([
     query(
       `SELECT act.id, act.kind, act.summary,
               to_char(act.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
@@ -178,8 +189,24 @@ async function relations(id: number) {
         ORDER BY e.entered_at ASC, e.id ASC`,
       [id],
     ),
+    query(
+      `SELECT a.id, a.inquiry_id, a.kind, a.original_name, a.stored_name, a.mime_type, a.size_bytes,
+              a.created_by, ad.name AS created_by_name,
+              to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at
+         FROM inquiry_attachments a
+         LEFT JOIN admins ad ON ad.id = a.created_by
+        WHERE a.inquiry_id = $1
+        ORDER BY a.created_at DESC, a.id DESC`,
+      [id],
+    ),
   ]);
-  return { activities, visits, price_events: priceEvents, stage_events: stageEvents };
+  return {
+    activities,
+    visits,
+    price_events: priceEvents,
+    stage_events: stageEvents,
+    attachments,
+  };
 }
 
 export async function getInquiry(id: number) {
@@ -213,6 +240,10 @@ export async function listInquiries(filters: InquiryFilters) {
   if (filters.leadSource) {
     params.push(filters.leadSource);
     where.push(`i.lead_source = $${params.length}`);
+  }
+  if (filters.eventType) {
+    params.push(filters.eventType);
+    where.push(`i.event_type = $${params.length}`);
   }
   if (filters.from) {
     params.push(filters.from);
@@ -276,6 +307,10 @@ async function bookedRequestsOnPipeline(filters: InquiryFilters) {
       `(CASE WHEN br.source = ANY($${params.length + 1}::text[]) THEN br.source ELSE 'other' END) = $${params.length}`,
     );
     params.push([...LEAD_SOURCES]);
+  }
+  if (filters.eventType) {
+    params.push(filters.eventType);
+    where.push(`br.event_type = $${params.length}`);
   }
   if (filters.from) {
     params.push(filters.from);
@@ -348,6 +383,8 @@ async function bookedRequestsOnPipeline(filters: InquiryFilters) {
       guests: row.guests,
       start_at: `${row.start_date}T00:00:00`,
       end_at: `${row.end_date}T00:00:00`,
+      cocktail_time: null,
+      accommodation_date: null,
       special_requests: row.message,
       additional_services: null,
       custom_arrangements: null,
@@ -355,8 +392,11 @@ async function bookedRequestsOnPipeline(filters: InquiryFilters) {
       package_price: 0,
       additional_charges: 0,
       discounts: 0,
+      discount_percent: null,
       other_fees: 0,
       total_quoted: 0,
+      vat_amount: 0,
+      rate_without_vat: 0,
       final_agreed_price: null,
       deposit_amount: null,
       deposit_note: null,
@@ -380,8 +420,10 @@ async function lockInquiry(client: PoolClient, id: number): Promise<LockedInquir
             i.offering_id, o.name AS offering_name, i.event_type, i.guests,
             to_char(i.start_at, 'YYYY-MM-DD HH24:MI:SS') AS start_at,
             to_char(i.end_at, 'YYYY-MM-DD HH24:MI:SS') AS end_at,
+            to_char(i.cocktail_time, 'HH24:MI:SS') AS cocktail_time,
+            to_char(i.accommodation_date, 'YYYY-MM-DD') AS accommodation_date,
             i.special_requests, i.additional_services, i.custom_arrangements, i.internal_notes,
-            i.package_price, i.additional_charges, i.discounts, i.other_fees,
+            i.package_price, i.additional_charges, i.discounts, i.discount_percent, i.other_fees,
             i.final_agreed_price, i.deposit_amount, i.deposit_note
        FROM inquiries i
        JOIN pipeline_stages s ON s.id = i.stage_id
@@ -469,7 +511,13 @@ async function defaultStage(client: PoolClient, pipeline: Pipeline): Promise<Sta
   return rows[0];
 }
 
-async function logActivity(client: PoolClient, inquiryId: number, adminId: number | null, kind: string, summary: string) {
+export async function logActivity(
+  client: PoolClient,
+  inquiryId: number,
+  adminId: number | null,
+  kind: string,
+  summary: string,
+) {
   await client.query(
     'INSERT INTO inquiry_activities (inquiry_id, admin_id, kind, summary) VALUES ($1, $2, $3, $4)',
     [inquiryId, adminId, kind, summary],
@@ -522,6 +570,7 @@ function priceChanged(current: LockedInquiry, input: InquiryInput) {
     !sameMoney(current.package_price, input.package_price) ||
     !sameMoney(current.additional_charges, input.additional_charges) ||
     !sameMoney(current.discounts, input.discounts) ||
+    !sameMoney(current.discount_percent, input.discount_percent) ||
     !sameMoney(current.other_fees, input.other_fees) ||
     !sameMoney(current.final_agreed_price, input.final_agreed_price) ||
     !sameMoney(current.deposit_amount, input.deposit_amount) ||
@@ -561,14 +610,16 @@ export async function createInquiry(input: InquiryInput, adminId: number) {
     const { rows } = await client.query<{ id: number }>(
       `INSERT INTO inquiries (
          pipeline, stage_id, customer_name, phone, email, lead_source, lead_source_detail,
-         offering_id, event_type, guests, start_at, end_at, special_requests, additional_services,
-         custom_arrangements, internal_notes, package_price, additional_charges, discounts, other_fees,
+         offering_id, event_type, guests, start_at, end_at, cocktail_time, accommodation_date,
+         special_requests, additional_services, custom_arrangements, internal_notes,
+         package_price, additional_charges, discounts, discount_percent, other_fees,
          final_agreed_price, deposit_amount, deposit_note, converted_at, created_by
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7,
          $8, $9, $10, $11, $12, $13, $14,
-         $15, $16, $17, $18, $19, $20,
-         $21, $22, $23, CASE WHEN $24::boolean THEN NOW() ELSE NULL END, $25
+         $15, $16, $17, $18,
+         $19, $20, $21, $22, $23,
+         $24, $25, $26, CASE WHEN $27::boolean THEN NOW() ELSE NULL END, $28
        ) RETURNING id`,
       [
         input.pipeline,
@@ -583,13 +634,16 @@ export async function createInquiry(input: InquiryInput, adminId: number) {
         input.guests,
         stay.window?.start ?? null,
         stay.window?.end ?? null,
+        input.cocktail_time,
+        input.accommodation_date,
         input.special_requests,
-        input.additional_services,
-        input.custom_arrangements,
+        null,
+        null,
         input.internal_notes,
         input.package_price,
         input.additional_charges,
         input.discounts,
+        input.discount_percent,
         input.other_fees,
         input.final_agreed_price,
         input.deposit_amount,
@@ -636,12 +690,13 @@ export async function updateInquiry(id: number, input: InquiryInput, updatedAt: 
       `UPDATE inquiries SET
          stage_id = $2, customer_name = $3, phone = $4, email = $5, lead_source = $6, lead_source_detail = $7,
          offering_id = $8, event_type = $9, guests = $10, start_at = $11, end_at = $12,
-         special_requests = $13, additional_services = $14, custom_arrangements = $15, internal_notes = $16,
-         package_price = $17, additional_charges = $18, discounts = $19, other_fees = $20,
-         final_agreed_price = $21, deposit_amount = $22, deposit_note = $23,
+         cocktail_time = $13, accommodation_date = $14,
+         special_requests = $15, additional_services = NULL, custom_arrangements = NULL, internal_notes = $16,
+         package_price = $17, additional_charges = $18, discounts = $19, discount_percent = $20, other_fees = $21,
+         final_agreed_price = $22, deposit_amount = $23, deposit_note = $24,
          stage_entered_at = CASE WHEN stage_id IS DISTINCT FROM $2 THEN NOW() ELSE stage_entered_at END,
          converted_at = CASE
-           WHEN converted_at IS NULL AND $24::boolean THEN NOW()
+           WHEN converted_at IS NULL AND $25::boolean THEN NOW()
            ELSE converted_at
          END
        WHERE id = $1`,
@@ -658,13 +713,14 @@ export async function updateInquiry(id: number, input: InquiryInput, updatedAt: 
         input.guests,
         stay.window?.start ?? null,
         stay.window?.end ?? null,
+        input.cocktail_time,
+        input.accommodation_date,
         input.special_requests,
-        input.additional_services,
-        input.custom_arrangements,
         input.internal_notes,
         input.package_price,
         input.additional_charges,
         input.discounts,
+        input.discount_percent,
         input.other_fees,
         input.final_agreed_price,
         input.deposit_amount,
@@ -725,9 +781,9 @@ export async function updateInquiry(id: number, input: InquiryInput, updatedAt: 
     if ((current.start_at ?? null) !== (stay.window?.start ?? null) || (current.end_at ?? null) !== (stay.window?.end ?? null)) {
       bits.push('dates');
     }
-    if ((current.special_requests ?? null) !== input.special_requests) bits.push('special requests');
-    if ((current.additional_services ?? null) !== input.additional_services) bits.push('additional services');
-    if ((current.custom_arrangements ?? null) !== input.custom_arrangements) bits.push('arrangements');
+    if ((current.cocktail_time ?? null) !== input.cocktail_time) bits.push('cocktail time');
+    if ((current.accommodation_date ?? null) !== input.accommodation_date) bits.push('accommodation date');
+    if ((current.special_requests ?? null) !== input.special_requests) bits.push('notes');
     if (bits.length) await logActivity(client, id, adminId, 'updated', `Updated ${bits.join(', ')}`);
   });
 }

@@ -3,7 +3,14 @@ import { useForm } from 'react-hook-form';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Checkbox, Modal, Select, Textarea, TextInput } from 'flowbite-react';
 import { api, ApiError, errorMessage } from '../../lib/api';
-import { LEAD_SOURCE_LABELS, LEAD_SOURCES, toDatetimeLocal } from '../../lib/format';
+import {
+  EVENT_TYPE_LABELS,
+  EVENT_TYPES,
+  LEAD_SOURCE_LABELS,
+  LEAD_SOURCES,
+  formatMoney,
+  toDatetimeLocal,
+} from '../../lib/format';
 import type { Agent, Inquiry, InquiryInput, LeadSource, Offering, Pipeline, PipelineStage } from '../../lib/types';
 import { useToast } from '../../context/ToastContext';
 import FormField from '../FormField';
@@ -18,20 +25,37 @@ interface FormValues {
   offering_id: string;
   event_type: string;
   guests: string;
-  start_at: string;
-  end_at: string;
+  start_date: string;
+  start_time: string;
+  end_date: string;
+  end_time: string;
+  cocktail_time: string;
+  accommodation_date: string;
   special_requests: string;
-  additional_services: string;
-  custom_arrangements: string;
   internal_notes: string;
   package_price: string;
   additional_charges: string;
-  discounts: string;
+  discount_percent: string;
   other_fees: string;
   final_agreed_price: string;
   deposit_amount: string;
   deposit_note: string;
   agent_ids: number[];
+}
+
+const ROOM_DEFAULT_CHECK_IN = '14:00';
+
+function splitDateTime(value: string | null | undefined): { date: string; time: string } {
+  if (!value) return { date: '', time: '' };
+  const local = toDatetimeLocal(value);
+  const [date = '', time = ''] = local.split('T');
+  return { date, time };
+}
+
+function joinDateTime(date: string, time: string): string | null {
+  if (!date) return null;
+  if (!time) return `${date}T00:00`;
+  return `${date}T${time}`;
 }
 
 function blank(stageId = ''): FormValues {
@@ -45,15 +69,17 @@ function blank(stageId = ''): FormValues {
     offering_id: '',
     event_type: '',
     guests: '',
-    start_at: '',
-    end_at: '',
+    start_date: '',
+    start_time: '',
+    end_date: '',
+    end_time: '',
+    cocktail_time: '',
+    accommodation_date: '',
     special_requests: '',
-    additional_services: '',
-    custom_arrangements: '',
     internal_notes: '',
     package_price: '',
     additional_charges: '',
-    discounts: '',
+    discount_percent: '',
     other_fees: '',
     final_agreed_price: '',
     deposit_amount: '',
@@ -63,6 +89,8 @@ function blank(stageId = ''): FormValues {
 }
 
 function fromInquiry(inquiry: Inquiry): FormValues {
+  const start = splitDateTime(inquiry.start_at);
+  const end = splitDateTime(inquiry.end_at);
   return {
     ...blank(String(inquiry.stage_id)),
     customer_name: inquiry.customer_name,
@@ -73,15 +101,17 @@ function fromInquiry(inquiry: Inquiry): FormValues {
     offering_id: inquiry.offering_id ? String(inquiry.offering_id) : '',
     event_type: inquiry.event_type ?? '',
     guests: inquiry.guests?.toString() ?? '',
-    start_at: toDatetimeLocal(inquiry.start_at),
-    end_at: toDatetimeLocal(inquiry.end_at),
+    start_date: start.date,
+    start_time: start.time,
+    end_date: end.date,
+    end_time: end.time,
+    cocktail_time: inquiry.cocktail_time?.slice(0, 5) ?? '',
+    accommodation_date: inquiry.accommodation_date ?? '',
     special_requests: inquiry.special_requests ?? '',
-    additional_services: inquiry.additional_services ?? '',
-    custom_arrangements: inquiry.custom_arrangements ?? '',
     internal_notes: inquiry.internal_notes ?? '',
     package_price: String(inquiry.package_price ?? 0),
     additional_charges: String(inquiry.additional_charges ?? 0),
-    discounts: String(inquiry.discounts ?? 0),
+    discount_percent: inquiry.discount_percent != null ? String(inquiry.discount_percent) : '',
     other_fees: String(inquiry.other_fees ?? 0),
     final_agreed_price: inquiry.final_agreed_price?.toString() ?? '',
     deposit_amount: inquiry.deposit_amount?.toString() ?? '',
@@ -93,6 +123,15 @@ function fromInquiry(inquiry: Inquiry): FormValues {
 function money(value: string): number | null {
   if (value.trim() === '') return null;
   return Number(value);
+}
+
+function vatBreakdown(packagePrice: number, charges: number, fees: number, discountPercent: number) {
+  const actual = packagePrice + charges + fees;
+  const discountAmount = Math.round(actual * discountPercent) / 100;
+  const gross = actual - discountAmount;
+  const vat = Math.round(gross * (12 / 112) * 100) / 100;
+  const net = Math.round((gross - vat) * 100) / 100;
+  return { actual, discountAmount, gross, vat, net };
 }
 
 export default function InquiryFormModal({
@@ -160,6 +199,9 @@ export default function InquiryFormModal({
 
   const mutation = useMutation({
     mutationFn: (values: FormValues) => {
+      const start_at = joinDateTime(values.start_date, values.start_time);
+      const end_at = event ? null : joinDateTime(values.end_date, values.end_time);
+      const discountPercent = money(values.discount_percent);
       const body: InquiryInput = {
         pipeline,
         stage_id: Number(values.stage_id),
@@ -171,15 +213,18 @@ export default function InquiryFormModal({
         offering_id: values.offering_id ? Number(values.offering_id) : null,
         event_type: event ? values.event_type || null : null,
         guests: values.guests === '' ? null : Number(values.guests),
-        start_at: values.start_at || null,
-        end_at: values.end_at || null,
+        start_at,
+        end_at,
+        cocktail_time: event ? values.cocktail_time || null : null,
+        accommodation_date: event ? values.accommodation_date || null : null,
         special_requests: values.special_requests || null,
-        additional_services: values.additional_services || null,
-        custom_arrangements: values.custom_arrangements || null,
+        additional_services: null,
+        custom_arrangements: null,
         internal_notes: values.internal_notes || null,
         package_price: money(values.package_price) ?? 0,
         additional_charges: money(values.additional_charges) ?? 0,
-        discounts: money(values.discounts) ?? 0,
+        discounts: 0,
+        discount_percent: discountPercent,
         other_fees: money(values.other_fees) ?? 0,
         final_agreed_price: money(values.final_agreed_price),
         deposit_amount: money(values.deposit_amount),
@@ -207,19 +252,24 @@ export default function InquiryFormModal({
   });
 
   const agentIds = watch('agent_ids');
-  const quoted =
-    (money(watch('package_price')) ?? 0) +
-    (money(watch('additional_charges')) ?? 0) +
-    (money(watch('other_fees')) ?? 0) -
-    (money(watch('discounts')) ?? 0);
+  const packagePrice = money(watch('package_price')) ?? 0;
+  const charges = money(watch('additional_charges')) ?? 0;
+  const fees = money(watch('other_fees')) ?? 0;
+  const discountPercent = money(watch('discount_percent')) ?? 0;
+  const breakdown = vatBreakdown(packagePrice, charges, fees, discountPercent);
 
   const pickPackage = (id: string) => {
     const next = packages.find((offering) => String(offering.id) === id);
-    const previous = packages.find((offering) => String(offering.id) === getValues('offering_id'));
     setValue('offering_id', id);
-    const price = getValues('package_price');
-    if (next && (price === '' || price === String(previous?.price ?? ''))) {
+    if (next) {
       setValue('package_price', next.price != null ? String(next.price) : '');
+    }
+  };
+
+  const onStartDateChange = (date: string) => {
+    setValue('start_date', date);
+    if (!event && date && !getValues('start_time')) {
+      setValue('start_time', ROOM_DEFAULT_CHECK_IN);
     }
   };
 
@@ -281,13 +331,13 @@ export default function InquiryFormModal({
                 <TextInput
                   placeholder="New agent name"
                   value={agentName}
-                  onChange={(event) => setAgentName(event.target.value)}
+                  onChange={(e) => setAgentName(e.target.value)}
                 />
                 <TextInput
                   type="email"
                   placeholder="Email, optional"
                   value={agentEmail}
-                  onChange={(event) => setAgentEmail(event.target.value)}
+                  onChange={(e) => setAgentEmail(e.target.value)}
                 />
                 <Button
                   color="secondary"
@@ -320,67 +370,108 @@ export default function InquiryFormModal({
                 </Select>
               </FormField>
               <FormField id="offering_id" label="Package">
-                <Select id="offering_id" {...register('offering_id')} onChange={(event) => pickPackage(event.target.value)}>
+                <Select id="offering_id" {...register('offering_id')} onChange={(e) => pickPackage(e.target.value)}>
                   <option value="">No package yet</option>
                   {packages.map((offering) => (
                     <option key={offering.id} value={offering.id}>
                       {offering.name}
                       {offering.quantity > 1 ? ` (${offering.quantity} available)` : ''}
+                      {offering.price != null ? ` — ${formatMoney(offering.price)}` : ''}
                     </option>
                   ))}
                 </Select>
               </FormField>
               {event && (
-                <FormField id="event_type" label="Event type">
-                  <TextInput id="event_type" placeholder="Wedding, birthday..." {...register('event_type')} />
+                <FormField id="event_type" label="Event type" error={errors.event_type?.message}>
+                  <Select id="event_type" {...register('event_type')}>
+                    <option value="">Select event type</option>
+                    {EVENT_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {EVENT_TYPE_LABELS[type]}
+                      </option>
+                    ))}
+                  </Select>
                 </FormField>
               )}
               <FormField id="guests" label="Guests" error={errors.guests?.message}>
                 <TextInput id="guests" type="number" min={0} {...register('guests')} />
               </FormField>
-              <FormField
-                id="start_at"
-                label={event ? 'Event start' : 'Check-in'}
-                hint={event ? 'Leave the end empty to hold the rest of that day once confirmed.' : 'Check-out can match the next arrival.'}
-              >
-                <TextInput id="start_at" type="datetime-local" {...register('start_at')} />
-              </FormField>
-              <FormField id="end_at" label={event ? 'Event end' : 'Check-out'} error={errors.end_at?.message}>
+              <FormField id="start_date" label={event ? 'Event date' : 'Check-in date'}>
                 <TextInput
-                  id="end_at"
-                  type="datetime-local"
-                  {...register('end_at', {
-                    validate: (value, all) => !value || !all.start_at || value > all.start_at || 'End must be after the start',
-                  })}
+                  id="start_date"
+                  type="date"
+                  value={watch('start_date')}
+                  onChange={(e) => onStartDateChange(e.target.value)}
                 />
               </FormField>
+              <FormField
+                id="start_time"
+                label={event ? 'Event start time' : 'Check-in time'}
+                hint={event ? 'Times in 5-minute steps. End of day is held when confirmed without a checkout.' : 'Defaults to 02:00 PM when the date is selected.'}
+                error={errors.start_time?.message}
+              >
+                <TextInput id="start_time" type="time" step={300} {...register('start_time')} />
+              </FormField>
+              {!event && (
+                <>
+                  <FormField id="end_date" label="Check-out date">
+                    <TextInput id="end_date" type="date" {...register('end_date')} />
+                  </FormField>
+                  <FormField id="end_time" label="Check-out time" error={errors.end_time?.message}>
+                    <TextInput
+                      id="end_time"
+                      type="time"
+                      step={300}
+                      {...register('end_time', {
+                        validate: (_value, all) => {
+                          const start = joinDateTime(all.start_date, all.start_time);
+                          const end = joinDateTime(all.end_date, all.end_time);
+                          if (!start || !end) return true;
+                          return end > start || 'Check-out must be after check-in';
+                        },
+                      })}
+                    />
+                  </FormField>
+                </>
+              )}
+              {event && (
+                <>
+                  <FormField id="cocktail_time" label="Cocktail time" hint="Optional. 5-minute steps.">
+                    <TextInput id="cocktail_time" type="time" step={300} {...register('cocktail_time')} />
+                  </FormField>
+                  <FormField id="accommodation_date" label="Accommodation date">
+                    <TextInput id="accommodation_date" type="date" {...register('accommodation_date')} />
+                  </FormField>
+                </>
+              )}
             </div>
           </section>
 
           <section className="space-y-4">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Special requests</h3>
-            <FormField id="special_requests" label="Special requests">
-              <Textarea id="special_requests" rows={2} {...register('special_requests')} />
-            </FormField>
-            <FormField id="additional_services" label="Additional services">
-              <Textarea id="additional_services" rows={2} {...register('additional_services')} />
-            </FormField>
-            <FormField id="custom_arrangements" label="Custom arrangements">
-              <Textarea id="custom_arrangements" rows={2} {...register('custom_arrangements')} />
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Notes</h3>
+            <FormField id="special_requests" label="Notes">
+              <Textarea id="special_requests" rows={3} {...register('special_requests')} />
             </FormField>
           </section>
 
           <section className="space-y-4">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Pricing</h3>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FormField id="package_price" label="Package price">
+              <FormField id="package_price" label="Package price (actual rate)">
                 <TextInput id="package_price" type="number" min={0} step="0.01" {...register('package_price')} />
               </FormField>
               <FormField id="additional_charges" label="Additional charges">
                 <TextInput id="additional_charges" type="number" min={0} step="0.01" {...register('additional_charges')} />
               </FormField>
-              <FormField id="discounts" label="Discounts">
-                <TextInput id="discounts" type="number" min={0} step="0.01" {...register('discounts')} />
+              <FormField id="discount_percent" label="Discount %" hint="Applied to the gross actual rate.">
+                <TextInput
+                  id="discount_percent"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  {...register('discount_percent')}
+                />
               </FormField>
               <FormField id="other_fees" label="Other fees">
                 <TextInput id="other_fees" type="number" min={0} step="0.01" {...register('other_fees')} />
@@ -395,12 +486,24 @@ export default function InquiryFormModal({
             <FormField id="deposit_note" label="Deposit note">
               <TextInput id="deposit_note" {...register('deposit_note')} />
             </FormField>
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              Quoted total:{' '}
-              <span className="font-semibold text-gray-900 dark:text-white">
-                {Number.isFinite(quoted) ? quoted.toLocaleString() : '—'}
-              </span>
-            </p>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+              <p>
+                Actual rate: <span className="font-semibold">{formatMoney(breakdown.actual)}</span>
+              </p>
+              <p>
+                Discount ({discountPercent}%): <span className="font-semibold">-{formatMoney(breakdown.discountAmount)}</span>
+              </p>
+              <p>
+                Gross after discount: <span className="font-semibold">{formatMoney(breakdown.gross)}</span>
+              </p>
+              <p>
+                Less VAT (12%): <span className="font-semibold">{formatMoney(breakdown.vat)}</span>
+              </p>
+              <p>
+                Rate without VAT:{' '}
+                <span className="font-semibold text-gray-900 dark:text-white">{formatMoney(breakdown.net)}</span>
+              </p>
+            </div>
           </section>
         </Modal.Body>
         <Modal.Footer className="justify-end">

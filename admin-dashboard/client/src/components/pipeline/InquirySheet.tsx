@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Select, Textarea, TextInput } from 'flowbite-react';
 import { api, errorMessage } from '../../lib/api';
 import {
+  formatDate,
   formatDuration,
   formatMoney,
   formatTimestamp,
@@ -11,7 +12,15 @@ import {
   VISIT_STATUS_LABELS,
   VISIT_STATUSES,
 } from '../../lib/format';
-import type { Inquiry, PipelineStage, SiteVisit, StageEvent, VisitStatus } from '../../lib/types';
+import type {
+  AttachmentKind,
+  Inquiry,
+  InquiryAttachment,
+  PipelineStage,
+  SiteVisit,
+  StageEvent,
+  VisitStatus,
+} from '../../lib/types';
 import { useToast } from '../../context/ToastContext';
 import Sheet from '../ui/Sheet';
 import ConfirmDialog from '../ConfirmDialog';
@@ -34,6 +43,108 @@ function stageTimeline(events: StageEvent[]) {
     const seconds = Math.max(0, (end - Date.parse(event.entered_at)) / 1000);
     return { ...event, seconds };
   });
+}
+
+function formatBytes(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AttachmentList({
+  inquiryId,
+  kind,
+  title,
+  hint,
+  attachments,
+  onChanged,
+}: {
+  inquiryId: number;
+  kind: AttachmentKind;
+  title: string;
+  hint: string;
+  attachments: InquiryAttachment[];
+  onChanged: () => void;
+}) {
+  const toast = useToast();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const items = attachments.filter((item) => item.kind === kind);
+
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const body = new FormData();
+      body.append('kind', kind);
+      body.append('file', file);
+      return api.upload<Inquiry>(`/inquiries/${inquiryId}/attachments`, body);
+    },
+    onSuccess: () => {
+      onChanged();
+      toast(kind === 'qualify' ? 'Quotation uploaded' : 'Proof of payment uploaded');
+      if (inputRef.current) inputRef.current.value = '';
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const remove = useMutation({
+    mutationFn: (attachmentId: number) => api.delete(`/inquiries/${inquiryId}/attachments/${attachmentId}`),
+    onSuccess: () => {
+      onChanged();
+      toast('Attachment removed');
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h4>
+        <p className="text-xs text-gray-500 dark:text-gray-400">{hint}</p>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-sm text-gray-500">No files yet.</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((item) => (
+            <li
+              key={item.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-gray-700"
+            >
+              <div>
+                <a
+                  className="font-medium text-primary-700 hover:underline dark:text-primary-300"
+                  href={api.downloadUrl(`/inquiries/${inquiryId}/attachments/${item.id}`)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {item.original_name}
+                </a>
+                <p className="text-xs text-gray-500">
+                  {formatBytes(item.size_bytes)} · {formatTimestamp(item.created_at)}
+                  {item.created_by_name ? ` · ${item.created_by_name}` : ''}
+                </p>
+              </div>
+              <Button size="xs" color="light" disabled={remove.isPending} onClick={() => remove.mutate(item.id)}>
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
+          className="block w-full max-w-xs text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-primary-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-primary-700 dark:text-gray-300 dark:file:bg-gray-800 dark:file:text-primary-300"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) upload.mutate(file);
+          }}
+        />
+        {upload.isPending && <span className="text-xs text-gray-500">Uploading…</span>}
+      </div>
+    </div>
+  );
 }
 
 export default function InquirySheet({
@@ -78,6 +189,22 @@ export default function InquirySheet({
     onSuccess: () => {
       refresh();
       toast('Stage updated');
+    },
+    onError: (err) => {
+      refresh();
+      toast(errorMessage(err), 'error');
+    },
+  });
+
+  const markWon = useMutation({
+    mutationFn: () => {
+      const won = stages.find((stage) => stage.outcome === 'won');
+      if (!won) throw new Error('This pipeline has no confirmed stage.');
+      return api.patch(`/inquiries/${inquiry!.id}/stage`, { stage_id: won.id, updated_at: inquiry!.updated_at });
+    },
+    onSuccess: () => {
+      refresh();
+      toast('Moved to Won Leads');
     },
     onError: (err) => {
       refresh();
@@ -133,6 +260,9 @@ export default function InquirySheet({
     { id: 'activity', label: 'Activity' },
   ];
 
+  const isWon = inquiry?.stage_outcome === 'won';
+  const attachments = inquiry?.attachments ?? [];
+
   return (
     <>
       <Sheet
@@ -142,6 +272,11 @@ export default function InquirySheet({
         footer={
           inquiry && (
             <div className="flex flex-wrap justify-end gap-2">
+              {!isWon && (
+                <Button color="success" disabled={markWon.isPending} isProcessing={markWon.isPending} onClick={() => markWon.mutate()}>
+                  Won
+                </Button>
+              )}
               <Button color="secondary" onClick={() => onEdit(inquiry)}>
                 Edit
               </Button>
@@ -191,40 +326,66 @@ export default function InquirySheet({
             </div>
 
             {tab === 'details' && (
-              <dl className="divide-y divide-gray-100 dark:divide-gray-700">
-                <Row label="Phone" value={inquiry.phone ?? ''} />
-                <Row label="Email" value={inquiry.email} />
-                <Row
-                  label="Lead source"
-                  value={
-                    inquiry.lead_source_detail
-                      ? `${LEAD_SOURCE_LABELS[inquiry.lead_source]} · ${inquiry.lead_source_detail}`
-                      : LEAD_SOURCE_LABELS[inquiry.lead_source]
-                  }
-                />
-                <Row label="Agents" value={inquiry.agents.map((agent) => agent.name).join(', ') || 'Unassigned'} />
-                <Row label="Package" value={inquiry.offering_name ?? ''} />
-                <Row label="Event type" value={inquiry.event_type ?? ''} />
-                <Row label="Guests" value={inquiry.guests != null ? String(inquiry.guests) : ''} />
-                <Row label="Starts" value={formatTimestamp(inquiry.start_at)} />
-                <Row label="Ends" value={formatTimestamp(inquiry.end_at)} />
-                <Row label="In this stage" value={formatDuration(inquiry.seconds_in_stage)} />
-                <Row label="Special requests" value={inquiry.special_requests ?? ''} />
-                <Row label="Additional services" value={inquiry.additional_services ?? ''} />
-                <Row label="Arrangements" value={inquiry.custom_arrangements ?? ''} />
-                <Row label="Internal notes" value={inquiry.internal_notes ?? ''} />
-                <Row label="Created" value={`${formatTimestamp(inquiry.created_at)}${inquiry.created_by_name ? ` · ${inquiry.created_by_name}` : ''}`} />
-              </dl>
+              <div className="space-y-6">
+                <dl className="divide-y divide-gray-100 dark:divide-gray-700">
+                  <Row label="Phone" value={inquiry.phone ?? ''} />
+                  <Row label="Email" value={inquiry.email} />
+                  <Row
+                    label="Lead source"
+                    value={
+                      inquiry.lead_source_detail
+                        ? `${LEAD_SOURCE_LABELS[inquiry.lead_source]} · ${inquiry.lead_source_detail}`
+                        : LEAD_SOURCE_LABELS[inquiry.lead_source]
+                    }
+                  />
+                  <Row label="Agents" value={inquiry.agents.map((agent) => agent.name).join(', ') || 'Unassigned'} />
+                  <Row label="Package" value={inquiry.offering_name ?? ''} />
+                  <Row label="Event type" value={inquiry.event_type ?? ''} />
+                  <Row label="Guests" value={inquiry.guests != null ? String(inquiry.guests) : ''} />
+                  <Row label="Starts" value={formatTimestamp(inquiry.start_at)} />
+                  {inquiry.pipeline === 'room_booking' && <Row label="Ends" value={formatTimestamp(inquiry.end_at)} />}
+                  {inquiry.pipeline === 'event_venue' && (
+                    <>
+                      <Row label="Cocktail time" value={inquiry.cocktail_time ?? ''} />
+                      <Row label="Accommodation date" value={formatDate(inquiry.accommodation_date)} />
+                    </>
+                  )}
+                  <Row label="In this stage" value={formatDuration(inquiry.seconds_in_stage)} />
+                  <Row label="Notes" value={inquiry.special_requests ?? ''} />
+                  <Row label="Internal notes" value={inquiry.internal_notes ?? ''} />
+                  <Row
+                    label="Created"
+                    value={`${formatTimestamp(inquiry.created_at)}${inquiry.created_by_name ? ` · ${inquiry.created_by_name}` : ''}`}
+                  />
+                </dl>
+                {inquiry.pipeline === 'event_venue' && (
+                  <AttachmentList
+                    inquiryId={inquiry.id}
+                    kind="qualify"
+                    title="Qualify files"
+                    hint="Attach quotations and related client files."
+                    attachments={attachments}
+                    onChanged={refresh}
+                  />
+                )}
+              </div>
             )}
 
             {tab === 'pricing' && (
-              <div className="space-y-4">
+              <div className="space-y-6">
                 <dl className="divide-y divide-gray-100 dark:divide-gray-700">
-                  <Row label="Package price" value={formatMoney(inquiry.package_price)} />
-                  <Row label="Additional charges" value={formatMoney(inquiry.additional_charges)} />
-                  <Row label="Discounts" value={formatMoney(inquiry.discounts)} />
-                  <Row label="Other fees" value={formatMoney(inquiry.other_fees)} />
-                  <Row label="Quoted total" value={formatMoney(inquiry.total_quoted)} />
+                  <Row label="Actual rate" value={formatMoney(inquiry.package_price + inquiry.additional_charges + inquiry.other_fees)} />
+                  <Row
+                    label="Discount"
+                    value={
+                      inquiry.discount_percent != null
+                        ? `${inquiry.discount_percent}% (${formatMoney(inquiry.discounts)})`
+                        : formatMoney(inquiry.discounts)
+                    }
+                  />
+                  <Row label="Gross after discount" value={formatMoney(inquiry.total_quoted)} />
+                  <Row label="Less VAT (12%)" value={formatMoney(inquiry.vat_amount)} />
+                  <Row label="Rate without VAT" value={formatMoney(inquiry.rate_without_vat)} />
                   <Row label="Final agreed price" value={formatMoney(inquiry.final_agreed_price)} />
                   <Row
                     label="Deposit"
@@ -235,6 +396,14 @@ export default function InquirySheet({
                     }
                   />
                 </dl>
+                <AttachmentList
+                  inquiryId={inquiry.id}
+                  kind="payment"
+                  title="Proof of payment"
+                  hint="Upload deposit slips, bank transfer receipts, or POP screenshots."
+                  attachments={attachments}
+                  onChanged={refresh}
+                />
                 <div>
                   <h4 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Price history</h4>
                   {(inquiry.price_events ?? []).length === 0 ? (

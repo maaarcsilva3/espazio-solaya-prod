@@ -48,6 +48,22 @@ export const api = {
   put: <T>(path: string, body: unknown) => request<T>('PUT', path, body),
   patch: <T>(path: string, body: unknown) => request<T>('PATCH', path, body),
   delete: <T>(path: string, params?: Query) => request<T>('DELETE', path, undefined, params),
+  upload: async <T>(path: string, formData: FormData): Promise<T> => {
+    const res = await fetch(buildUrl(path), {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 401 && !path.startsWith('/auth/')) {
+        window.dispatchEvent(new Event('auth:expired'));
+      }
+      throw new ApiError(res.status, data.message ?? 'Request failed', data.errors);
+    }
+    return data as T;
+  },
+  downloadUrl: (path: string) => buildUrl(path),
 };
 
 export function errorMessage(err: unknown): string {

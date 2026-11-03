@@ -7,6 +7,7 @@ import { log } from './logger';
 import { ensureStatusesTable } from './routes/statuses';
 import { ensureCrmSchema } from './routes/pipelineStages';
 import { ensureAgentsSchema } from './routes/agents';
+import { ensureUploadsDir } from './services/attachments';
 
 const app = createApp();
 let server: Server | undefined;
@@ -27,6 +28,7 @@ async function start() {
   await ensureCrmSchema();
   await ensureAgentsSchema();
   await ensureFirstAdmin();
+  ensureUploadsDir();
   server = app.listen(config.port, () => {
     log('info', 'Admin dashboard running', { port: config.port });
   });

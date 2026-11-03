@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Select, TextInput } from 'flowbite-react';
 import { HiPlus, HiSearch, HiViewBoards } from 'react-icons/hi';
 import { api, errorMessage } from '../lib/api';
-import { LEAD_SOURCE_LABELS, LEAD_SOURCES } from '../lib/format';
+import { EVENT_TYPE_LABELS, EVENT_TYPES, LEAD_SOURCE_LABELS, LEAD_SOURCES } from '../lib/format';
 import type { Agent, Inquiry, Offering, Pipeline, PipelineStage } from '../lib/types';
 import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/PageHeader';
@@ -47,6 +47,7 @@ export default function PipelinePage({ pipeline }: { pipeline: Pipeline }) {
   const [agentId, setAgentId] = useState('');
   const [offeringId, setOfferingId] = useState('');
   const [leadSource, setLeadSource] = useState('');
+  const [eventType, setEventType] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [sort, setSort] = useState('created_at');
@@ -60,7 +61,11 @@ export default function PipelinePage({ pipeline }: { pipeline: Pipeline }) {
     return () => clearTimeout(timer);
   }, [search]);
 
-  const filters = { pipeline, search: debounced, stageId, agentId, offeringId, leadSource, from, to, sort };
+  useEffect(() => {
+    setEventType('');
+  }, [pipeline]);
+
+  const filters = { pipeline, search: debounced, stageId, agentId, offeringId, leadSource, eventType, from, to, sort };
 
   const { data: stages = [], isLoading: stagesLoading } = useQuery({
     queryKey: ['pipeline-stages', pipeline],
@@ -76,6 +81,7 @@ export default function PipelinePage({ pipeline }: { pipeline: Pipeline }) {
         agent_id: agentId,
         offering_id: offeringId,
         lead_source: leadSource,
+        event_type: event ? eventType : undefined,
         from,
         to,
         sort,
@@ -97,7 +103,19 @@ export default function PipelinePage({ pipeline }: { pipeline: Pipeline }) {
       ),
     [offerings, event],
   );
-  const visibleStages = stageId ? stages.filter((stage) => String(stage.id) === stageId) : stages;
+  const activeStages = useMemo(() => stages.filter((stage) => stage.outcome !== 'won'), [stages]);
+  const wonStage = useMemo(() => stages.find((stage) => stage.outcome === 'won') ?? null, [stages]);
+  const filteringWonOnly = Boolean(wonStage && stageId && String(wonStage.id) === stageId);
+  const visibleActiveStages = filteringWonOnly
+    ? []
+    : stageId
+      ? activeStages.filter((stage) => String(stage.id) === stageId)
+      : activeStages;
+  const wonInquiries = useMemo(
+    () => (wonStage ? inquiries.filter((inquiry) => inquiry.stage_id === wonStage.id) : []),
+    [inquiries, wonStage],
+  );
+  const showWonSection = Boolean(wonStage && (!stageId || filteringWonOnly));
 
   const move = useMutation({
     mutationFn: ({ inquiry, stageId: nextStage }: { inquiry: Inquiry; stageId: number }) =>
@@ -192,20 +210,30 @@ export default function PipelinePage({ pipeline }: { pipeline: Pipeline }) {
             </option>
           ))}
         </Select>
-        <TextInput type="date" value={from} onChange={(event) => setFrom(event.target.value)} aria-label="From date" />
-        <TextInput type="date" value={to} onChange={(event) => setTo(event.target.value)} aria-label="To date" />
-        <Select value={sort} onChange={(event) => setSort(event.target.value)}>
+        {event && (
+          <Select value={eventType} onChange={(e) => setEventType(e.target.value)}>
+            <option value="">All event types</option>
+            {EVENT_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {EVENT_TYPE_LABELS[type]}
+              </option>
+            ))}
+          </Select>
+        )}
+        <TextInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From date" />
+        <TextInput type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To date" />
+        <Select value={sort} onChange={(e) => setSort(e.target.value)}>
           {SORTS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
           ))}
         </Select>
-        <Select value={stageId} onChange={(event) => setStageId(event.target.value)}>
+        <Select value={stageId} onChange={(e) => setStageId(e.target.value)}>
           <option value="">All stages</option>
           {stages.map((stage) => (
             <option key={stage.id} value={stage.id}>
-              {stage.label}
+              {stage.outcome === 'won' ? 'Won Leads' : stage.label}
             </option>
           ))}
         </Select>
@@ -217,61 +245,86 @@ export default function PipelinePage({ pipeline }: { pipeline: Pipeline }) {
         <EmptyState icon={HiViewBoards} title="No stages yet" description="Add a stage to start this pipeline." />
       ) : (
         <>
-          <div className="hidden md:block">
-            <PipelineBoard
-              stages={visibleStages}
-              inquiries={inquiries}
-              disabled={settingsOpen}
-              onOpen={openInquiry}
-              onMove={(inquiry, nextStage) => move.mutate({ inquiry, stageId: nextStage })}
-            />
-          </div>
-          <div className="space-y-4 md:hidden">
-            {visibleStages.map((stage) => {
-              const cards = inquiries.filter((inquiry) => inquiry.stage_id === stage.id);
-              if (!cards.length && stageId) return null;
-              return (
-                <section key={stage.id}>
-                  <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: stage.bg.trim() }} />
-                    {stage.label}
-                    <span className="text-xs font-normal text-gray-400">{cards.length}</span>
-                  </h3>
-                  <div className="space-y-2">
-                    {cards.map((inquiry) => (
-                      <InquiryCardView
-                        key={inquiry.id}
-                        inquiry={inquiry}
-                        onOpen={() => openInquiry(inquiry.id)}
-                        extra={
-                          inquiry.booking_request_id ? undefined : (
-                            <Select
-                              sizing="sm"
-                              className="mt-2"
-                              value={inquiry.stage_id}
-                              onChange={(event) => move.mutate({ inquiry, stageId: Number(event.target.value) })}
-                            >
-                              {stages.map((option) => (
-                                <option key={option.id} value={option.id}>
-                                  Move to {option.label}
-                                </option>
-                              ))}
-                            </Select>
-                          )
-                        }
-                      />
-                    ))}
-                  </div>
-                </section>
-              );
-            })}
-            {inquiries.length === 0 && (
-              <EmptyState icon={HiViewBoards} title="No inquiries match" description="Try another search or add an inquiry." />
-            )}
-          </div>
-          {!isMobile && inquiries.length === 0 && (
-            <p className="mt-2 text-sm text-gray-500">No inquiries match these filters.</p>
+          {!filteringWonOnly && (
+            <>
+              <div className="hidden md:block">
+                <PipelineBoard
+                  stages={visibleActiveStages}
+                  inquiries={inquiries}
+                  disabled={settingsOpen}
+                  onOpen={openInquiry}
+                  onMove={(inquiry, nextStage) => move.mutate({ inquiry, stageId: nextStage })}
+                />
+              </div>
+              <div className="space-y-4 md:hidden">
+                {visibleActiveStages.map((stage) => {
+                  const cards = inquiries.filter((inquiry) => inquiry.stage_id === stage.id);
+                  if (!cards.length && stageId) return null;
+                  return (
+                    <section key={stage.id}>
+                      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: stage.bg.trim() }} />
+                        {stage.label}
+                        <span className="text-xs font-normal text-gray-400">{cards.length}</span>
+                      </h3>
+                      <div className="space-y-2">
+                        {cards.map((inquiry) => (
+                          <InquiryCardView
+                            key={inquiry.id}
+                            inquiry={inquiry}
+                            onOpen={() => openInquiry(inquiry.id)}
+                            extra={
+                              inquiry.booking_request_id ? undefined : (
+                                <Select
+                                  sizing="sm"
+                                  className="mt-2"
+                                  value={inquiry.stage_id}
+                                  onChange={(e) => move.mutate({ inquiry, stageId: Number(e.target.value) })}
+                                >
+                                  {stages.map((option) => (
+                                    <option key={option.id} value={option.id}>
+                                      Move to {option.outcome === 'won' ? 'Won Leads' : option.label}
+                                    </option>
+                                  ))}
+                                </Select>
+                              )
+                            }
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </>
           )}
+
+          {showWonSection && wonStage && (
+            <section className="mt-8">
+              <div className="mb-3 flex items-center gap-2">
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">Won Leads</h2>
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                  {wonInquiries.length}
+                </span>
+              </div>
+              {wonInquiries.length === 0 ? (
+                <p className="text-sm text-gray-500">No won leads yet. Use the Won button on an inquiry to move it here.</p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {wonInquiries.map((inquiry) => (
+                    <InquiryCardView key={inquiry.id} inquiry={inquiry} onOpen={() => openInquiry(inquiry.id)} />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {inquiries.length === 0 &&
+            (isMobile ? (
+              <EmptyState icon={HiViewBoards} title="No inquiries match" description="Try another search or add an inquiry." />
+            ) : (
+              <p className="mt-2 text-sm text-gray-500">No inquiries match these filters.</p>
+            ))}
         </>
       )}
 

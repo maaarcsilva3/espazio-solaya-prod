@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS inquiries (
   guests              INTEGER CHECK (guests IS NULL OR guests >= 0),
   start_at            TIMESTAMP,
   end_at              TIMESTAMP,
+  cocktail_time       TIME,
+  accommodation_date  DATE,
   special_requests    TEXT,
   additional_services TEXT,
   custom_arrangements TEXT,
@@ -73,6 +75,7 @@ CREATE TABLE IF NOT EXISTS inquiries (
   package_price       NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (package_price >= 0),
   additional_charges  NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (additional_charges >= 0),
   discounts           NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (discounts >= 0),
+  discount_percent    NUMERIC(5, 2) CHECK (discount_percent IS NULL OR (discount_percent >= 0 AND discount_percent <= 100)),
   other_fees          NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (other_fees >= 0),
   final_agreed_price  NUMERIC(12, 2) CHECK (final_agreed_price IS NULL OR final_agreed_price >= 0),
   deposit_amount      NUMERIC(12, 2) CHECK (deposit_amount IS NULL OR deposit_amount >= 0),
@@ -179,6 +182,24 @@ CREATE TABLE IF NOT EXISTS inquiry_activities (
 
 CREATE INDEX IF NOT EXISTS inquiry_activities_inquiry_idx
   ON inquiry_activities (inquiry_id, created_at);
+
+CREATE TABLE IF NOT EXISTS inquiry_attachments (
+  id            SERIAL PRIMARY KEY,
+  inquiry_id    INTEGER NOT NULL REFERENCES inquiries(id) ON DELETE CASCADE,
+  kind          TEXT NOT NULL CHECK (kind IN ('qualify', 'payment')),
+  original_name VARCHAR(255) NOT NULL,
+  stored_name   VARCHAR(255) NOT NULL,
+  mime_type     VARCHAR(120) NOT NULL,
+  size_bytes    INTEGER NOT NULL CHECK (size_bytes > 0),
+  created_by    INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS inquiry_attachments_inquiry_idx
+  ON inquiry_attachments (inquiry_id, kind, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS inquiry_attachments_stored_name_idx
+  ON inquiry_attachments (stored_name);
 
 INSERT INTO offerings (name, type, description, capacity, price, price_unit, quantity)
 SELECT v.name, v.type::offering_type, v.description, v.capacity, v.price, v.price_unit, v.quantity

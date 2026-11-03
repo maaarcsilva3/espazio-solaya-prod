@@ -44,4 +44,8 @@ export const config = {
     .map((o) => o.trim())
     .filter(Boolean),
   clientDist: path.resolve(__dirname, '../../client/dist'),
+  uploadsDir: process.env.UPLOADS_DIR
+    ? path.resolve(process.env.UPLOADS_DIR)
+    : path.resolve(__dirname, '../../uploads'),
+  uploadMaxBytes: Number(process.env.UPLOAD_MAX_BYTES ?? 10 * 1024 * 1024),
 };
