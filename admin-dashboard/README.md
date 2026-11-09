@@ -66,7 +66,25 @@ The public API is available without login and is limited to the origins in `CORS
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/public/offerings` | Active offerings for the form (`type` is `event_place_with_rooms`, `event_place_only`, `room_only` or `amenity`) |
+| `POST` | `/api/public/inquiries` | Submit a pipeline inquiry (Event venue or Room booking board, `lead_source: website`) |
 | `POST` | `/api/public/requests` | Submit a booking request (saved with status `pending`) |
+
+Request body for `POST /api/public/inquiries`:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `full_name` or `customer_name` | yes | |
+| `email` | yes | |
+| `phone` | no | |
+| `offering_id` | yes | active non-amenity package; type chooses the pipeline (`room_only` → room booking, event packages → event venue) |
+| `start_date` / `end_date` | yes | `YYYY-MM-DD`, start cannot be in the past |
+| `guests` | no | whole number |
+| `event_type` | for event packages | `Corporate`, `Wedding`, or `Socials` |
+| `message` | no | stored as special requests |
+| `amenity_ids` | no | amenity names are appended into special requests (inquiries have no amenity join) |
+| `website` | no | **honeypot** - keep as a hidden empty input; bots that fill it are ignored |
+
+Inquiry submissions land on the first open pipeline stage (typically **Inquiry**). Pricing, agents, and stage are not accepted from the website.
 
 Request body for `POST /api/public/requests`:
 

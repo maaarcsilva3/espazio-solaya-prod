@@ -591,7 +591,7 @@ async function holdIfNeeded(
   await assertOfferingAvailable(client, { offeringId, window, excludeInquiryId });
 }
 
-export async function createInquiry(input: InquiryInput, adminId: number) {
+export async function createInquiry(input: InquiryInput, adminId: number | null) {
   return withTransaction(async (client) => {
     const quote = quoteTotal(input);
     if (!quote.ok) throw new HttpError(400, quote.message);

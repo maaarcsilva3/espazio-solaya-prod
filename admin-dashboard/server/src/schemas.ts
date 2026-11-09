@@ -183,6 +183,40 @@ const datesMessage = { message: 'End date must be on or after start date', path:
 
 export const publicRequestSchema = requestBase.refine(datesInOrder, datesMessage);
 
+/** Website form → pipeline inquiry. Accepts booking-style field names. */
+export const publicInquirySchema = z
+  .object({
+    full_name: z.string().trim().min(1, 'Name is required').max(160).optional(),
+    customer_name: z.string().trim().min(1, 'Name is required').max(160).optional(),
+    email: z.string().trim().toLowerCase().email('Enter a valid email'),
+    phone: optionalText(40),
+    offering_id: z.coerce.number().int().positive('Choose a package'),
+    start_date: dateString,
+    end_date: dateString,
+    guests: optionalInt,
+    event_type: optionalEventType,
+    message: optionalText(5000),
+    amenity_ids: z.array(z.coerce.number().int().positive()).max(50).default([]),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.full_name && !value.customer_name) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Name is required', path: ['full_name'] });
+    }
+  })
+  .refine(datesInOrder, datesMessage)
+  .transform((value) => ({
+    customer_name: (value.customer_name || value.full_name) as string,
+    email: value.email,
+    phone: value.phone,
+    offering_id: value.offering_id,
+    start_date: value.start_date,
+    end_date: value.end_date,
+    guests: value.guests,
+    event_type: value.event_type,
+    message: value.message,
+    amenity_ids: value.amenity_ids,
+  }));
+
 export const adminRequestSchema = requestBase
   .extend({
     status: statusKey.optional(),
